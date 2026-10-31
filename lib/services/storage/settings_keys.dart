@@ -575,6 +575,18 @@ class SettingsKeys {
     false,
     group: SettingGroup.player,
   );
+  /// 按实际播放成功率和加载速度给规则排序
+  static const smartPluginOrder = SettingKey<bool>(
+    'smartPluginOrder',
+    true,
+    group: SettingGroup.player,
+  );
+  /// 各规则的播放表现记录（JSON），由 PluginPlaybackStats 维护
+  static const pluginPlaybackStats = SettingKey<String>(
+    'pluginPlaybackStats',
+    '{}',
+    group: SettingGroup.misc,
+  );
 
   static final List<SettingKey<Object?>> all = [
     hAenable,
@@ -682,6 +694,8 @@ class SettingsKeys {
     playerControllerLayerDisappearTime,
     defaultVolume,
     playerMuted,
+    smartPluginOrder,
+    pluginPlaybackStats,
   ];
 
   static List<SettingKey<Object?>> byGroup(SettingGroup group) {

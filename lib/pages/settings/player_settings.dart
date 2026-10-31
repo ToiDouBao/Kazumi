@@ -38,6 +38,7 @@ class _PlayerSettingsPageState extends State<PlayerSettingsPage> {
   late bool playerDisableAnimations;
   late bool forceAdBlocker;
   late bool autoPlayNext;
+  late bool smartPluginOrder;
   late bool backgroundPlayback;
   late bool brightnessVolumeGesture;
   late int playerButtonSkipTime;
@@ -69,6 +70,8 @@ class _PlayerSettingsPageState extends State<PlayerSettingsPage> {
     showPlayerError = GStorage.getSetting<bool>(SettingsKeys.showPlayerError);
     playerDebugMode = GStorage.getSetting<bool>(SettingsKeys.playerDebugMode);
     autoPlayNext = GStorage.getSetting<bool>(SettingsKeys.autoPlayNext);
+    smartPluginOrder =
+        GStorage.getSetting<bool>(SettingsKeys.smartPluginOrder);
     backgroundPlayback =
         GStorage.getSetting<bool>(SettingsKeys.backgroundPlayback);
     playerDisableAnimations =
@@ -340,6 +343,18 @@ class _PlayerSettingsPageState extends State<PlayerSettingsPage> {
                 title: Text('自动连播'),
                 description: Text('当前视频播放完毕后自动播放下一集'),
                 initialValue: autoPlayNext,
+              ),
+              SettingsTile.switchTile(
+                leading: Icons.sort_rounded,
+                onToggle: (value) async {
+                  smartPluginOrder = value ?? !smartPluginOrder;
+                  await GStorage.putSetting<bool>(
+                      SettingsKeys.smartPluginOrder, smartPluginOrder);
+                  setState(() {});
+                },
+                title: Text('规则智能排序'),
+                description: Text('按播放成功率和加载速度排列片源，关闭后使用规则管理中的顺序'),
+                initialValue: smartPluginOrder,
               ),
               if (Platform.isAndroid)
                 SettingsTile.switchTile(

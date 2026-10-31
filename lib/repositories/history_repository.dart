@@ -42,6 +42,12 @@ abstract class IHistoryRepository {
     String entryKind = HistoryEntryKind.online,
   });
 
+  /// 获取某部番剧在所有规则中最近的一条在线历史记录
+  ///
+  /// 每季是独立的番剧（不同的 [bangumiId]），所以只在同一季内跨规则查找。
+  /// 不存在返回null
+  History? getLatestHistoryForBangumi(int bangumiId);
+
   /// 更新或创建历史记录
   ///
   /// [identity] 播放历史身份
@@ -191,6 +197,32 @@ class HistoryRepository implements IHistoryRepository {
     } catch (e, stackTrace) {
       KazumiLogger().e(
         'GStorage: get history failed. bangumi=${bangumiItem.name}',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
+  }
+
+  @override
+  History? getLatestHistoryForBangumi(int bangumiId) {
+    try {
+      History? latest;
+      for (final history in _historiesBox.values) {
+        if (history.bangumiItem.id != bangumiId ||
+            HistoryEntryKind.normalize(history.entryKind) !=
+                HistoryEntryKind.online) {
+          continue;
+        }
+        if (latest == null ||
+            latest.lastWatchTime.isBefore(history.lastWatchTime)) {
+          latest = history;
+        }
+      }
+      return latest;
+    } catch (e, stackTrace) {
+      KazumiLogger().e(
+        'GStorage: get latest history failed. bangumiId=$bangumiId',
         error: e,
         stackTrace: stackTrace,
       );

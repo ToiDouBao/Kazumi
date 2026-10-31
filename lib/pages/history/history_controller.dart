@@ -46,6 +46,11 @@ abstract class _HistoryController with Store {
     );
   }
 
+  /// 同一季在所有规则中最近的一条在线记录
+  History? latestForBangumi(int bangumiId) {
+    return _historyRepository.getLatestHistoryForBangumi(bangumiId);
+  }
+
   Progress? findProgress(
     BangumiItem bangumiItem,
     String adapterName,

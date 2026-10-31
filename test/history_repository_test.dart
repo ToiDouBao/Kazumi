@@ -273,6 +273,77 @@ void main() {
       expect(reconciliationStarted, isTrue);
     });
   });
+
+  group('HistoryRepository latest across plugins', () {
+    HistoryRepository newRepository() => HistoryRepository(
+          historiesBox: historiesBox,
+          privateModeReader: () => privateMode,
+          progressSyncAppender: _noopHistorySync,
+          deleteSyncAppender: _noopDeleteSync,
+          clearSyncAppender: _noopClearSync,
+        );
+
+    Future<void> watch(
+      HistoryRepository repository,
+      BangumiItem item,
+      String plugin,
+      int episode,
+    ) {
+      return repository.updateHistory(
+        identity: PlaybackHistoryIdentity.online(
+          bangumiItem: item,
+          pluginName: plugin,
+          episodeNumber: episode,
+          episodeTitle: 'EP$episode',
+          road: 0,
+          onlineBangumiSrc: 'https://$plugin.example/src',
+          episodePageUrl: '/$plugin/$episode',
+        ),
+        progress: const Duration(seconds: 30),
+      );
+    }
+
+    test('returns the most recent plugin for the same season', () async {
+      final repository = newRepository();
+      final season = _item(7);
+      await watch(repository, season, 'mgnacg', 2);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await watch(repository, season, 'moonci', 3);
+
+      final latest = repository.getLatestHistoryForBangumi(7);
+      expect(latest, isNotNull);
+      expect(latest!.adapterName, 'moonci');
+      expect(latest.lastWatchEpisode, 3);
+    });
+
+    test('keeps seasons separate', () async {
+      final repository = newRepository();
+      await watch(repository, _item(6), 'mgnacg', 25);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await watch(repository, _item(7), 'mgnacg', 3);
+
+      expect(repository.getLatestHistoryForBangumi(6)!.lastWatchEpisode, 25);
+      expect(repository.getLatestHistoryForBangumi(7)!.lastWatchEpisode, 3);
+      expect(repository.getLatestHistoryForBangumi(8), isNull);
+    });
+
+    test('ignores offline history', () async {
+      final repository = newRepository();
+      await repository.updateHistory(
+        identity: PlaybackHistoryIdentity.offline(
+          bangumiItem: _item(9),
+          pluginName: 'mgnacg',
+          episodeNumber: 1,
+          episodeTitle: 'EP1',
+          road: 0,
+          episodePageUrl: '/offline/1',
+        ),
+        progress: const Duration(seconds: 5),
+      );
+
+      expect(repository.getLatestHistoryForBangumi(9), isNull);
+    });
+  });
 }
 
 Future<void> _noopHistorySync({

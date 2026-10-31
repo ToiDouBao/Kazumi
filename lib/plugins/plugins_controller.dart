@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:mobx/mobx.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:kazumi/plugins/plugins.dart';
+import 'package:kazumi/services/plugin/plugin_playback_stats.dart';
 import 'package:kazumi/services/plugin/plugin_validity_tracker.dart';
 import 'package:kazumi/request/apis/plugin_catalog_api.dart';
 import 'package:kazumi/modules/plugin/plugin_http_module.dart';
@@ -91,6 +92,7 @@ abstract class _PluginsController with Store {
   ObservableList<PluginHTTPItem> pluginHTTPList = ObservableList.of([]);
 
   final validityTracker = PluginValidityTracker();
+  final playbackStats = PluginPlaybackStats();
 
   static const _pluginsFileName = 'plugins.json';
   File? _pluginsFile;

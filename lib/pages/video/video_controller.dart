@@ -3,6 +3,7 @@ import 'package:flutter_modular/flutter_modular.dart';
 import 'package:kazumi/modules/roads/road_module.dart';
 import 'package:kazumi/pages/video/video_playback_args.dart';
 import 'package:kazumi/plugins/plugins.dart';
+import 'package:kazumi/plugins/plugins_controller.dart';
 import 'package:kazumi/pages/history/history_controller.dart';
 import 'package:kazumi/pages/player/player_controller.dart';
 import 'package:kazumi/modules/bangumi/bangumi_item.dart';
@@ -60,6 +61,7 @@ abstract class _VideoPageController with Store implements Disposable {
     this.historyController,
     this.downloadRepository,
     this.downloadManager,
+    this.pluginsController,
   );
 
   late BangumiItem bangumiItem;
@@ -143,6 +145,7 @@ abstract class _VideoPageController with Store implements Disposable {
   final HistoryController historyController;
   final IDownloadRepository downloadRepository;
   final IDownloadManager downloadManager;
+  final PluginsController pluginsController;
 
   WebViewVideoSourceService? _videoSourceService;
 
@@ -602,6 +605,8 @@ abstract class _VideoPageController with Store implements Disposable {
       }
     });
 
+    final pluginName = currentPlugin.name;
+    final loadStopwatch = Stopwatch()..start();
     try {
       final source = await _videoSourceService!.resolve(
         url,
@@ -649,6 +654,11 @@ abstract class _VideoPageController with Store implements Disposable {
 
       final initialized = await playerController.init(params);
       if (session.isActive && initialized) {
+        unawaited(pluginsController.playbackStats.record(
+          pluginName,
+          ok: true,
+          loadMs: loadStopwatch.elapsedMilliseconds,
+        ));
         playingEpisode = VideoEpisodeSelection(
           episode: resolvedEpisode.listIndex,
           road: resolvedEpisode.roadIndex,
@@ -661,6 +671,7 @@ abstract class _VideoPageController with Store implements Disposable {
       if (session.isStale) {
         return;
       }
+      unawaited(pluginsController.playbackStats.record(pluginName, ok: false));
       _failLoading('视频解析超时，请重试');
     } on VideoSourceCancelledException {
       KazumiLogger().i('VideoPageController: video URL resolution cancelled');
@@ -668,6 +679,7 @@ abstract class _VideoPageController with Store implements Disposable {
       if (session.isStale) {
         return;
       }
+      unawaited(pluginsController.playbackStats.record(pluginName, ok: false));
       _failLoading('视频解析失败：${e.toString()}');
     }
   }

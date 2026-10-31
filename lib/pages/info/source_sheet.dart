@@ -25,6 +25,8 @@ import 'package:kazumi/services/plugin/captcha_verification_service.dart';
 import 'package:kazumi/services/plugin/plugin_search_service.dart';
 import 'package:kazumi/services/plugin/rule_engine_models.dart'
     show RuleCancelToken;
+import 'package:kazumi/services/storage/settings_keys.dart';
+import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/utils/device.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -189,7 +191,6 @@ class _SourceSheetState extends State<SourceSheet> with KazumiDialogOwner {
               ),
           };
           final seenBySource = <String, Set<String>>{};
-          String? firstResultSource;
           // Responses follow completion order; groups keep configured order.
           for (final response
               in widget.infoController.pluginSearchResponseList) {
@@ -199,11 +200,19 @@ class _SourceSheetState extends State<SourceSheet> with KazumiDialogOwner {
             for (final result in response.data) {
               if (seen.add(result.src)) group.results.add(result);
             }
-            if (group.hasResults) firstResultSource ??= group.name;
           }
+          var groups = groupsByName.values.toList();
+          if (GStorage.getSetting(SettingsKeys.smartPluginOrder)) {
+            groups = _pluginsController.playbackStats
+                .rankBy(groups, (group) => group.name);
+          }
+          final firstResultSource = groups
+              .where((group) => group.hasResults)
+              .map((group) => group.name)
+              .firstOrNull;
           return _SourceSheetView(
             keyword: _keyword,
-            groups: groupsByName.values.toList(),
+            groups: groups,
             firstResultSource: firstResultSource,
             onSourceSearch: _showCustomKeyword,
             onSourceAliasSearch: _showAliasPicker,

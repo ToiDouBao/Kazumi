@@ -14,6 +14,7 @@ import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'package:kazumi/bean/widget/collect_button.dart';
 import 'package:kazumi/bean/widget/embedded_native_control_area.dart';
 import 'package:kazumi/modules/bangumi/bangumi_item.dart';
+import 'package:kazumi/pages/history/history_controller.dart';
 import 'package:kazumi/pages/info/info_actions_menu.dart';
 import 'package:kazumi/pages/info/info_controller.dart';
 import 'package:kazumi/pages/info/info_tabview.dart';
@@ -22,6 +23,9 @@ import 'package:kazumi/pages/info/source_sheet.dart';
 import 'package:kazumi/plugins/plugins_controller.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/platform/desktop_window_config.dart';
+import 'package:kazumi/services/player/resume_playback_service.dart';
+import 'package:kazumi/services/plugin/rule_engine_models.dart'
+    show RuleCancelToken;
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/utils/device.dart';
 
@@ -42,7 +46,7 @@ class InfoPage extends StatefulWidget {
 }
 
 class _InfoPageState extends State<InfoPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, KazumiDialogOwner {
   static const List<String> _infoTabs = <String>[
     '概览',
     '吐槽',
@@ -54,6 +58,9 @@ class _InfoPageState extends State<InfoPage>
       Duration(milliseconds: 600);
 
   InfoController get infoController => widget.infoController;
+  final HistoryController _historyController = inject<HistoryController>();
+  final ResumePlaybackService _resumePlaybackService =
+      inject<ResumePlaybackService>();
   late final TabController infoTabController;
   late final bool showRating;
 
@@ -300,6 +307,75 @@ class _InfoPageState extends State<InfoPage>
     }
   }
 
+  Future<void> _resumeWatching() async {
+    if (dialogs.isRunning) return;
+    if (widget.pluginsController.pluginList.isEmpty) {
+      _startWatching();
+      return;
+    }
+    final bangumiItem = infoController.bangumiItem;
+    final cancelToken = RuleCancelToken();
+    var found = false;
+    await dialogs.run((task) async {
+      final args = await task.loading(
+        message: '正在寻找最快的片源…',
+        barrierDismissible: isDesktop(),
+        onCancel: cancelToken.cancel,
+        action: () => _resumePlaybackService.open(
+          bangumiItem,
+          cancelToken: cancelToken,
+        ),
+      );
+      if (args == null) return;
+      found = true;
+      task.withContext(
+          (context) => context.pushNamed('/video/', arguments: args));
+    }, errorMessage: '暂时无法继续播放，请稍后重试');
+    if (!found && !cancelToken.isCancelled && mounted) {
+      KazumiDialog.showToast(message: '没有找到可以直接播放的片源，请手动选择');
+      _startWatching();
+    }
+  }
+
+  Widget _buildWatchButtons() {
+    return Observer(builder: (context) {
+      // 读取历史列表长度，看完回来时按钮会刷新
+      _historyController.histories.length;
+      final latest =
+          _historyController.latestForBangumi(infoController.bangumiItem.id);
+      if (latest == null) {
+        return FloatingActionButton.extended(
+          tooltip: '开始观看',
+          onPressed: _startWatching,
+          label: const Text('开始观看'),
+          icon: const Icon(Icons.play_arrow_rounded),
+        );
+      }
+      final episodeLabel = latest.lastWatchEpisodeName.isNotEmpty
+          ? latest.lastWatchEpisodeName
+          : '第${latest.lastWatchEpisode}集';
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton.small(
+            heroTag: null,
+            tooltip: '选择片源',
+            onPressed: _startWatching,
+            child: const Icon(Icons.list_rounded),
+          ),
+          const SizedBox(width: 12),
+          FloatingActionButton.extended(
+            heroTag: null,
+            tooltip: '继续观看',
+            onPressed: _resumeWatching,
+            label: Text('继续观看 $episodeLabel'),
+            icon: const Icon(Icons.play_arrow_rounded),
+          ),
+        ],
+      );
+    });
+  }
+
   void _startWatching() {
     if (widget.pluginsController.pluginList.isEmpty) {
       KazumiDialog.showToast(
@@ -468,12 +544,7 @@ class _InfoPageState extends State<InfoPage>
           );
         }),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        tooltip: '开始观看',
-        onPressed: _startWatching,
-        label: const Text('开始观看'),
-        icon: const Icon(Icons.play_arrow_rounded),
-      ),
+      floatingActionButton: _buildWatchButtons(),
     );
   }
 }

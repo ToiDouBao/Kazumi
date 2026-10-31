@@ -13,6 +13,7 @@ import 'package:kazumi/bean/widget/embedded_native_control_area.dart';
 import 'package:kazumi/bean/widget/loading_indicator.dart';
 import 'package:kazumi/bean/widget/media_error_widget.dart';
 import 'package:kazumi/modules/download/download_module.dart';
+import 'package:kazumi/modules/history/history_module.dart';
 import 'package:kazumi/navigation.dart';
 import 'package:kazumi/pages/download/download_controller.dart';
 import 'package:kazumi/pages/download/download_episode_sheet.dart';
@@ -170,13 +171,26 @@ class _VideoPageState extends State<VideoPage>
     var progress = historyController.lastWatching(
         videoPageController.bangumiItem,
         videoPageController.currentPlugin.name);
+    var road = progress?.road ?? 0;
+    // 同一季在别的规则看得更近时，沿用那边的集数和进度
+    final latest =
+        historyController.latestForBangumi(videoPageController.bangumiItem.id);
+    if (latest != null &&
+        latest.adapterName != videoPageController.currentPlugin.name) {
+      progress = latest.progresses[latest.lastWatchEpisode] ??
+          Progress(latest.lastWatchEpisode, 0, 0);
+      // 不同规则的线路编号不一定对应，没有该线路时用第一条
+      road = videoPageController.roadList.length > progress.road
+          ? progress.road
+          : 0;
+    }
     if (progress != null) {
-      if (videoPageController.roadList.length > progress.road) {
-        if (videoPageController.roadList[progress.road].data.length >=
+      if (videoPageController.roadList.length > road) {
+        if (videoPageController.roadList[road].data.length >=
             progress.episode) {
           videoPageController.resetEpisodeState(
             episode: progress.episode,
-            road: progress.road,
+            road: road,
           );
           if (playResume) {
             videoPageController.historyOffset = progress.progress.inSeconds;
