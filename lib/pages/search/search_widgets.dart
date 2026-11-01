@@ -147,7 +147,8 @@ class _SearchResultCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final title = item.nameCn.isNotEmpty ? item.nameCn : item.name;
-    final year = item.airDate.length >= 4 ? item.airDate.substring(0, 4) : '';
+    // 例如 "2016 · TV · 13话"，方便分辨第几季和剧场版
+    final year = item.seasonLabel;
     return Material(
       type: MaterialType.transparency,
       clipBehavior: Clip.antiAlias,

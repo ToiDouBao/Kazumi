@@ -39,30 +39,73 @@ class BangumiCardV extends StatelessWidget {
             children: [
               AspectRatio(
                 aspectRatio: 0.65,
-                child: LayoutBuilder(builder: (context, boxConstraints) {
-                  final double maxWidth = boxConstraints.maxWidth;
-                  final double maxHeight = boxConstraints.maxHeight;
-                  return enableHero
-                      ? Hero(
-                          transitionOnUserGestures: true,
-                          flightShuttleBuilder:
-                              NetworkImgLayer.heroFlightShuttleBuilder,
-                          tag: bangumiItem.id,
-                          child: NetworkImgLayer(
-                            src: bangumiItem.images['large'] ?? '',
-                            width: maxWidth,
-                            height: maxHeight,
-                          ),
-                        )
-                      : NetworkImgLayer(
-                          src: bangumiItem.images['large'] ?? '',
-                          width: maxWidth,
-                          height: maxHeight,
-                        );
-                }),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _buildCover(),
+                    if (bangumiItem.seasonLabel.isNotEmpty)
+                      Positioned(
+                        left: 4,
+                        bottom: 4,
+                        child: _SeasonBadge(label: bangumiItem.seasonLabel),
+                      ),
+                  ],
+                ),
               ),
               BangumiContent(bangumiItem: bangumiItem)
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCover() {
+    return LayoutBuilder(builder: (context, boxConstraints) {
+      final double maxWidth = boxConstraints.maxWidth;
+      final double maxHeight = boxConstraints.maxHeight;
+      return enableHero
+          ? Hero(
+              transitionOnUserGestures: true,
+              flightShuttleBuilder:
+                  NetworkImgLayer.heroFlightShuttleBuilder,
+              tag: bangumiItem.id,
+              child: NetworkImgLayer(
+                src: bangumiItem.images['large'] ?? '',
+                width: maxWidth,
+                height: maxHeight,
+              ),
+            )
+          : NetworkImgLayer(
+              src: bangumiItem.images['large'] ?? '',
+              width: maxWidth,
+              height: maxHeight,
+            );
+    });
+  }
+}
+
+/// 封面左下角的 "2016 · TV · 13话"，用来分辨第几季和剧场版
+class _SeasonBadge extends StatelessWidget {
+  const _SeasonBadge({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.65),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
           ),
         ),
       ),

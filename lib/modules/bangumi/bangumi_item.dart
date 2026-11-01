@@ -39,6 +39,9 @@ class BangumiItem {
   String info;
   // Calendar metadata is separate from counted user tags and is not persisted.
   final List<String> metaTags;
+  // 放送形式（TV / 剧场版 / OVA / WEB）和集数，来自搜索接口，不持久化
+  final String platform;
+  final int totalEpisodes;
   BangumiInterest? interest;
 
   BangumiItem({
@@ -58,8 +61,36 @@ class BangumiItem {
     required this.votesCount,
     required this.info,
     this.metaTags = const [],
+    this.platform = '',
+    this.totalEpisodes = 0,
     this.interest,
   });
+
+  static const _formatNames = ['TV', '剧场版', 'OVA', 'OAD', 'WEB', '电影'];
+
+  /// 放送形式；接口没给时从标签里推断
+  String get formatLabel {
+    if (platform.isNotEmpty) return platform;
+    for (final format in _formatNames) {
+      if (metaTags.contains(format) ||
+          tags.any((tag) => tag.name == format)) {
+        return format;
+      }
+    }
+    return '';
+  }
+
+  String get airYear {
+    final match = RegExp(r'^\d{4}').firstMatch(airDate);
+    return match?.group(0) ?? '';
+  }
+
+  /// 卡片上用来区分季和电影的简短说明，例如 "2016 · TV · 13话"
+  String get seasonLabel => [
+        airYear,
+        formatLabel,
+        if (totalEpisodes > 0 && formatLabel != '剧场版') '$totalEpisodes话',
+      ].where((part) => part.isNotEmpty).join(' · ');
 
   factory BangumiItem.fromJson(Map<String, dynamic> json) {
     List<String> parseBangumiAliases(Map<String, dynamic> jsonData) {
@@ -172,7 +203,17 @@ class BangumiItem {
               .toSet()
               .toList()
           : const [],
+      platform: json['platform'] is String ? json['platform'] : '',
+      totalEpisodes: _parseEpisodeCount(json),
       interest: interest,
     );
+  }
+
+  static int _parseEpisodeCount(Map<String, dynamic> json) {
+    for (final key in ['total_episodes', 'eps']) {
+      final value = json[key];
+      if (value is int && value > 0) return value;
+    }
+    return 0;
   }
 }
