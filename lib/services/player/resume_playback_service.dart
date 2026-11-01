@@ -56,12 +56,27 @@ class ResumePlaybackService {
     }
     if (cancelToken?.isCancelled ?? false) return null;
 
+    return findAlternative(
+      bangumiItem,
+      exclude: triedPlugin == null ? const {} : {triedPlugin},
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// 按排名同时试前几个规则（跳过 [exclude]），返回排名最高且至少有
+  /// [minEpisode] 集的结果。播放失败时用来换规则。
+  Future<OnlineVideoPlaybackArgs?> findAlternative(
+    BangumiItem bangumiItem, {
+    Set<String> exclude = const {},
+    int minEpisode = 1,
+    RuleCancelToken? cancelToken,
+  }) async {
     final plugins = List<Plugin>.of(_pluginsController.pluginList);
     final ordered = GStorage.getSetting(SettingsKeys.smartPluginOrder)
-        ? stats.rank(plugins)
+        ? _pluginsController.playbackStats.rank(plugins)
         : plugins;
     final candidates = ordered
-        .where((plugin) => plugin.name != triedPlugin)
+        .where((plugin) => !exclude.contains(plugin.name))
         .take(maxCandidates)
         .toList();
     if (candidates.isEmpty) return null;
@@ -74,7 +89,7 @@ class ResumePlaybackService {
     }));
     final attempts = [
       for (var i = 0; i < candidates.length; i++)
-        _tryPlugin(candidates[i], bangumiItem, tokens[i]),
+        _tryPlugin(candidates[i], bangumiItem, tokens[i], minEpisode),
     ];
     try {
       // 按排名顺序取第一个成功的，其余的取消
@@ -90,12 +105,13 @@ class ResumePlaybackService {
     }
   }
 
-  Future<VideoPlaybackArgs?> _tryPlugin(
+  Future<OnlineVideoPlaybackArgs?> _tryPlugin(
     Plugin plugin,
     BangumiItem bangumiItem,
     RuleCancelToken token,
+    int minEpisode,
   ) {
-    return _searchAndLoad(plugin, bangumiItem, token).timeout(
+    return _searchAndLoad(plugin, bangumiItem, token, minEpisode).timeout(
       perPluginTimeout,
       onTimeout: () {
         token.cancel();
@@ -110,10 +126,11 @@ class ResumePlaybackService {
     });
   }
 
-  Future<VideoPlaybackArgs?> _searchAndLoad(
+  Future<OnlineVideoPlaybackArgs?> _searchAndLoad(
     Plugin plugin,
     BangumiItem bangumiItem,
     RuleCancelToken token,
+    int minEpisode,
   ) async {
     final keyword =
         bangumiItem.nameCn.isEmpty ? bangumiItem.name : bangumiItem.nameCn;
@@ -125,7 +142,7 @@ class ResumePlaybackService {
     ]);
     if (match == null) return null;
     final roads = await plugin.queryChapterRoads(match.src, cancelToken: token);
-    if (roads.isEmpty) return null;
+    if (!roads.any((road) => road.data.length >= minEpisode)) return null;
     return OnlineVideoPlaybackArgs(
       bangumiItem: bangumiItem,
       plugin: plugin,

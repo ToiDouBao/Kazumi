@@ -7,11 +7,13 @@ class MediaErrorWidget extends StatelessWidget {
     required this.title,
     required this.errMsg,
     required this.icon,
+    this.actions = const [],
   });
 
   final String title;
   final String errMsg;
   final IconData icon;
+  final List<Widget> actions;
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +31,7 @@ class MediaErrorWidget extends StatelessWidget {
         errMsg: errMsg,
         icon: icon,
         compact: true,
+        actions: actions,
       ),
     );
   }

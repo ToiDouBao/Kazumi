@@ -3,15 +3,18 @@ import 'dart:async';
 import 'package:canvas_danmaku/models/danmaku_content_item.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:flutter_modular/flutter_modular.dart';
 import 'package:mobx/mobx.dart' as mobx;
 import 'package:screen_brightness_platform_interface/screen_brightness_platform_interface.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'package:kazumi/bean/appbar/drag_to_move_bar.dart' as dtb;
 import 'package:kazumi/bean/dialog/adaptive_bottom_sheet.dart';
+import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'package:kazumi/bean/widget/embedded_native_control_area.dart';
 import 'package:kazumi/bean/widget/loading_indicator.dart';
 import 'package:kazumi/bean/widget/media_error_widget.dart';
+import 'package:kazumi/bean/widget/state_presentation.dart';
 import 'package:kazumi/modules/download/download_module.dart';
 import 'package:kazumi/modules/history/history_module.dart';
 import 'package:kazumi/navigation.dart';
@@ -29,6 +32,7 @@ import 'package:kazumi/pages/video/video_page_layout.dart';
 import 'package:kazumi/pages/video/video_side_panel.dart';
 import 'package:kazumi/pages/video/video_system_bars.dart';
 import 'package:kazumi/services/player/pip_utils.dart';
+import 'package:kazumi/services/player/resume_playback_service.dart';
 import 'package:kazumi/services/player/timed_shutdown_service.dart';
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/utils/device.dart';
@@ -76,6 +80,14 @@ class _VideoPageState extends State<VideoPage>
 
   StreamSubscription<SyncPlayChatMessage>? _syncChatSubscription;
   late final mobx.ReactionDisposer _pipModeListener;
+  late final mobx.ReactionDisposer _playbackErrorListener;
+  final ResumePlaybackService _resumePlaybackService =
+      inject<ResumePlaybackService>();
+
+  /// 本集已经失败过的规则，自动换规则时跳过
+  final Set<String> _failedPlugins = {};
+  int? _failedPluginsEpisode;
+  bool _switchingSource = false;
   LocalHistoryEntry? _desktopPipEntry;
   late ModalRoute<Object?> _route;
 
@@ -95,6 +107,12 @@ class _VideoPageState extends State<VideoPage>
     _pipModeListener = mobx.reaction<bool>(
       (_) => videoPageController.isPip,
       _syncDesktopPipHistory,
+    );
+    _playbackErrorListener = mobx.reaction<String?>(
+      (_) => videoPageController.errorMessage,
+      (message) {
+        if (message != null) unawaited(_switchSource(auto: true));
+      },
     );
   }
 
@@ -234,6 +252,7 @@ class _VideoPageState extends State<VideoPage>
       _logSubscription?.cancel();
     } catch (_) {}
     _pipModeListener();
+    _playbackErrorListener();
     _desktopPipEntry?.remove();
     _desktopPipEntry = null;
     if (!isDesktop()) {
@@ -277,6 +296,58 @@ class _VideoPageState extends State<VideoPage>
         currentRoad: currentRoad,
         offset: offset,
         playerController: playerController);
+  }
+
+  /// 换到下一个最好的规则，继续播放同一集。
+  /// [auto] 为 true 时由解析失败触发。
+  Future<void> _switchSource({bool auto = false}) async {
+    if (_switchingSource ||
+        _isExiting ||
+        !mounted ||
+        videoPageController.isOfflineMode) {
+      return;
+    }
+    final episode = videoPageController.selectedEpisode.episode;
+    final road = videoPageController.selectedEpisode.road;
+    if (_failedPluginsEpisode != episode) {
+      _failedPlugins.clear();
+      _failedPluginsEpisode = episode;
+    }
+    _failedPlugins.add(videoPageController.currentPlugin.name);
+    setState(() => _switchingSource = true);
+    final args = await _resumePlaybackService.findAlternative(
+      videoPageController.bangumiItem,
+      exclude: _failedPlugins,
+      minEpisode: episode,
+    );
+    if (!mounted || _isExiting) return;
+    setState(() => _switchingSource = false);
+    if (args == null) {
+      KazumiDialog.showToast(
+        message: auto ? '其他规则也无法播放这一集，请稍后重试' : '没有其他规则能播放这一集',
+      );
+      return;
+    }
+    final progress = historyController
+        .latestForBangumi(videoPageController.bangumiItem.id)
+        ?.progresses[episode];
+    final offset = playResume ? progress?.progress.inSeconds ?? 0 : 0;
+    videoPageController.applyPlaybackArgs(args);
+    final roads = videoPageController.roadList;
+    final newRoad = road < roads.length && roads[road].data.length >= episode
+        ? road
+        : roads.indexWhere((item) => item.data.length >= episode);
+    KazumiDialog.showToast(message: '已切换到规则 ${args.plugin.name}');
+    await changeEpisode(episode, currentRoad: newRoad, offset: offset);
+  }
+
+  Widget _buildSwitchSourceButton(String label) {
+    return TextButton.icon(
+      onPressed: () => _switchSource(),
+      icon: const Icon(Icons.swap_horiz_rounded),
+      label: Text(label),
+      style: TextButton.styleFrom(foregroundColor: Colors.white),
+    );
   }
 
   void _revealCurrentEpisode() {
@@ -379,11 +450,37 @@ class _VideoPageState extends State<VideoPage>
                   color: Colors.black,
                   child: Observer(builder: (context) {
                     final errorMessage = videoPageController.errorMessage;
+                    if (_switchingSource) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            LoadingIndicator(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .tertiaryContainer),
+                            const SizedBox(height: 10),
+                            const Text(
+                              '正在换到其他规则…',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
                     if (errorMessage != null) {
                       return MediaErrorWidget(
                         title: '暂时无法播放',
                         errMsg: errorMessage,
                         icon: Icons.videocam_off_outlined,
+                        actions: [
+                          if (!videoPageController.isOfflineMode)
+                            StateActionButton(
+                              onPressed: () => _switchSource(),
+                              text: '换个规则播放',
+                              icon: Icons.swap_horiz_rounded,
+                            ),
+                        ],
                       );
                     }
                     return Center(
@@ -401,6 +498,10 @@ class _VideoPageState extends State<VideoPage>
                                 : '视频资源解析成功, 播放器加载中',
                             style: const TextStyle(color: Colors.white),
                           ),
+                          if (!videoPageController.isOfflineMode) ...[
+                            const SizedBox(height: 8),
+                            _buildSwitchSourceButton('太慢了？换个规则'),
+                          ],
                         ],
                       ),
                     );
@@ -447,6 +548,13 @@ class _VideoPageState extends State<VideoPage>
                           const Expanded(
                               child: dtb.DragToMoveArea(
                                   child: SizedBox(height: 40))),
+                          if (!videoPageController.isOfflineMode)
+                            IconButton(
+                              tooltip: '换个规则',
+                              icon: const Icon(Icons.swap_horiz_rounded,
+                                  color: Colors.white),
+                              onPressed: () => _switchSource(),
+                            ),
                           IconButton(
                             icon: const Icon(Icons.refresh_outlined,
                                 color: Colors.white),
