@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:kazumi/services/network/acceleration_mode.dart';
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/utils/bangumi_mirror_credentials.dart';
@@ -18,8 +19,13 @@ enum BangumiAcceleration implements AccelerationMode {
   }
 
   static bool get mirrorAvailable =>
-      bangumiMirrorCredentials['id']!.isNotEmpty &&
-      bangumiMirrorCredentials['value']!.isNotEmpty;
+      debugMirrorAvailableOverride ??
+      (bangumiMirrorCredentials['id']!.isNotEmpty &&
+          bangumiMirrorCredentials['value']!.isNotEmpty);
+
+  /// 测试环境没有密钥，测试镜像路由时用它强制视为可用
+  @visibleForTesting
+  static bool? debugMirrorAvailableOverride;
 
   @override
   String get label => switch (this) {

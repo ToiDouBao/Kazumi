@@ -11,6 +11,7 @@ import 'package:kazumi/repositories/collect_crud_repository.dart';
 import 'package:kazumi/request/clients/bangumi_client.dart';
 import 'package:kazumi/request/core/dio_factory.dart';
 import 'package:kazumi/request/core/network_exception.dart';
+import 'package:kazumi/services/network/bangumi_acceleration.dart';
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/services/sync/bangumi_sync_service.dart';
 import 'package:logger/logger.dart';
@@ -83,6 +84,8 @@ void main() {
   });
 
   test('ECH image acceleration preserves Bangumi API mirror routing', () async {
+    BangumiAcceleration.debugMirrorAvailableOverride = true;
+    addTearDown(() => BangumiAcceleration.debugMirrorAvailableOverride = null);
     final previousMode = GStorage.getSetting<String>(
       SettingsKeys.imageAcceleration,
     );
