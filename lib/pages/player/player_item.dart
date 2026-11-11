@@ -12,6 +12,9 @@ import 'package:kazumi/pages/player/controller/player_screenshot_controller.dart
 import 'package:kazumi/pages/player/syncplay_sheet.dart';
 import 'package:kazumi/utils/constants.dart';
 import 'package:kazumi/services/logging/logger.dart';
+import 'package:kazumi/modules/bangumi/bangumi_item.dart';
+import 'package:kazumi/services/player/op_ed_skip.dart';
+import 'package:kazumi/services/player/op_ed_skip_service.dart';
 import 'package:kazumi/services/player/pip_utils.dart';
 import 'package:kazumi/services/sync/webdav.dart';
 import 'package:flutter/gestures.dart';
@@ -113,6 +116,11 @@ class _PlayerItemState extends State<PlayerItem>
   late double _danmakuBorderSize;
 
   late bool autoPlayNext;
+  late bool _autoSkipOpEd;
+  final OpEdSkipService _opEdSkipService = inject<OpEdSkipService>();
+  final OpEdSkipTracker _opEdSkip = OpEdSkipTracker();
+  String? _opEdKey;
+  bool _opEdLookupStarted = false;
   late bool backgroundPlayback;
   late bool brightnessVolumeGesture;
 
@@ -569,6 +577,122 @@ class _PlayerItemState extends State<PlayerItem>
   Future<void> skipOP() async {
     await playerController.seekBy(
       Duration(seconds: playerController.playback.buttonSkipTime),
+    );
+  }
+
+  /// 每秒调用：换集后查询片头片尾，并推进跳过倒计时
+  void _updateOpEdSkip() {
+    if (!_autoSkipOpEd) return;
+    final playback = playerController.playback;
+    if (videoPageController.loading || playback.loading) {
+      // 换集加载中，收起上一集的提示
+      if (_opEdKey != null) {
+        _opEdKey = null;
+        _opEdSkip.reset();
+      }
+      return;
+    }
+
+    final episode = videoPageController.playbackEpisode.episode;
+    final bangumiItem = videoPageController.bangumiItem;
+    final key = '${bangumiItem.id}:$episode:${playerController.videoUrl}';
+    if (key != _opEdKey) {
+      _opEdKey = key;
+      _opEdLookupStarted = false;
+      _opEdSkip.reset();
+    }
+    final duration = playback.playerDuration;
+    if (!_opEdLookupStarted && duration > Duration.zero) {
+      _opEdLookupStarted = true;
+      unawaited(_loadOpEdSegments(key, bangumiItem, episode, duration));
+    }
+
+    final target = _opEdSkip.tick(
+      playback.playerPosition,
+      playing: playback.playerPlaying,
+    );
+    if (target != null) unawaited(_seekPastSegment(target));
+  }
+
+  Future<void> _loadOpEdSegments(
+    String key,
+    BangumiItem bangumiItem,
+    int episode,
+    Duration duration,
+  ) async {
+    // 先用视频内嵌章节，缺的片头/片尾再从 AniSkip 补上
+    final segments = segmentsFromChapters(
+      await playerController.playback.readChapters(),
+      duration,
+    ).toList();
+    if (segments.length < SkipSegmentKind.values.length) {
+      final online = await _opEdSkipService.fetchSegments(
+        bangumiItem,
+        episode: episode,
+        videoLength: duration,
+      );
+      for (final segment in online) {
+        if (!segments.any((s) => s.kind == segment.kind)) {
+          segments.add(segment);
+        }
+      }
+    }
+    if (!mounted || _opEdKey != key) return;
+    if (segments.isNotEmpty) {
+      KazumiLogger().i('PlayerController: OP/ED segments $segments');
+    }
+    _opEdSkip.setSegments(segments);
+  }
+
+  Future<void> _seekPastSegment(Duration target) async {
+    final duration = playerController.playback.playerDuration;
+    var position = target;
+    // 片尾一直到结尾时停在最后半秒，让播放自然结束并触发自动连播
+    if (duration > Duration.zero &&
+        position > duration - const Duration(milliseconds: 500)) {
+      position = duration - const Duration(milliseconds: 500);
+    }
+    await playerController.seek(position);
+  }
+
+  Widget _buildOpEdSkipPrompt() {
+    return ValueListenableBuilder<PendingSkip?>(
+      valueListenable: _opEdSkip.pending,
+      builder: (context, pending, _) {
+        if (pending == null) return const SizedBox.shrink();
+        return Material(
+          color: Colors.black.withValues(alpha: 0.75),
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 4, 6, 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${pending.secondsLeft} 秒后跳过${pending.segment.kind.label}',
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                ),
+                const SizedBox(width: 6),
+                TextButton(
+                  onPressed: () {
+                    _opEdSkip.cancel();
+                    widget.keyboardFocus.requestFocus();
+                  },
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    final target = _opEdSkip.skipNow();
+                    if (target != null) unawaited(_seekPastSegment(target));
+                    widget.keyboardFocus.requestFocus();
+                  },
+                  child: const Text('立即跳过'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1173,6 +1297,7 @@ class _PlayerItemState extends State<PlayerItem>
   Timer getPlayerTimer() {
     return Timer.periodic(const Duration(seconds: 1), (timer) {
       playerController.syncPlaybackState();
+      _updateOpEdSkip();
       unawaited(_updateAndroidPIPActions());
       _syncAudioServiceState();
       _emitDanmakusForCurrentPosition();
@@ -1339,6 +1464,7 @@ class _PlayerItemState extends State<PlayerItem>
     _danmakuUseSystemFont = GStorage.getSetting(SettingsKeys.useSystemFont);
     _danmakuBorderSize = GStorage.getSetting(SettingsKeys.danmakuBorderSize);
     autoPlayNext = GStorage.getSetting(SettingsKeys.autoPlayNext);
+    _autoSkipOpEd = GStorage.getSetting(SettingsKeys.autoSkipOpEd);
     backgroundPlayback = GStorage.getSetting(SettingsKeys.backgroundPlayback);
     brightnessVolumeGesture =
         GStorage.getSetting(SettingsKeys.brightnessVolumeGesture);
@@ -1361,6 +1487,7 @@ class _PlayerItemState extends State<PlayerItem>
     windowManager.removeListener(this);
     playerController.seeking.invalidateInteractiveSeek();
     playerTimer?.cancel();
+    _opEdSkip.dispose();
     hideTimer?.cancel();
     mouseScrollerTimer?.cancel();
     _adjustmentHudHideTimer?.cancel();
@@ -1644,6 +1771,13 @@ class _PlayerItemState extends State<PlayerItem>
                               },
                             ),
                     ),
+                    if (!(Platform.isAndroid &&
+                        (videoPageController.isPip || _pipEnterRequested)))
+                      Positioned(
+                        right: 16,
+                        bottom: 96,
+                        child: _buildOpEdSkipPrompt(),
+                      ),
                   ]),
                 ),
               ),

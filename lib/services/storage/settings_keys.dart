@@ -587,6 +587,18 @@ class SettingsKeys {
     '{}',
     group: SettingGroup.misc,
   );
+  /// 播放到片头/片尾时倒计时后自动跳过
+  static const autoSkipOpEd = SettingKey<bool>(
+    'autoSkipOpEd',
+    true,
+    group: SettingGroup.player,
+  );
+  /// Bangumi id → MyAnimeList id 的缓存（JSON），用于查询片头片尾时间
+  static const malIdCache = SettingKey<String>(
+    'malIdCache',
+    '{}',
+    group: SettingGroup.misc,
+  );
 
   static final List<SettingKey<Object?>> all = [
     hAenable,
@@ -696,6 +708,8 @@ class SettingsKeys {
     playerMuted,
     smartPluginOrder,
     pluginPlaybackStats,
+    autoSkipOpEd,
+    malIdCache,
   ];
 
   static List<SettingKey<Object?>> byGroup(SettingGroup group) {

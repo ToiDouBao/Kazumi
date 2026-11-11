@@ -12,6 +12,7 @@ import 'package:kazumi/utils/constants.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/network/proxy_utils.dart';
 import 'package:kazumi/services/network/system_proxy_service.dart';
+import 'package:kazumi/services/player/op_ed_skip.dart';
 import 'package:kazumi/services/player/playback_cache_policy.dart';
 import 'package:kazumi/services/player/player_error_mapper.dart';
 import 'package:kazumi/services/storage/storage.dart';
@@ -627,6 +628,33 @@ abstract class _PlayerPlaybackController with Store {
       ownedPlayer?.dispose() ?? Future<void>.value(),
       _cancelDebugInfo(),
     ]);
+  }
+
+  /// 读取视频内嵌的章节（多见于 MKV），读取失败时返回空列表
+  Future<List<VideoChapter>> readChapters() async {
+    final player = mediaPlayer;
+    if (player == null) return const [];
+    try {
+      final pp = player.platform as NativePlayer;
+      final count =
+          int.tryParse(await pp.getProperty('chapter-list/count')) ?? 0;
+      final chapters = <VideoChapter>[];
+      for (var i = 0; i < count && i < 64; i++) {
+        if (!isCurrentPlayer(player)) return const [];
+        final time =
+            double.tryParse(await pp.getProperty('chapter-list/$i/time'));
+        if (time == null) continue;
+        final title = await pp.getProperty('chapter-list/$i/title');
+        chapters.add((
+          start: Duration(milliseconds: (time * 1000).round()),
+          title: title,
+        ));
+      }
+      return chapters;
+    } catch (e) {
+      KazumiLogger().w('PlayerController: failed to read chapters', error: e);
+      return const [];
+    }
   }
 
   Future<Uint8List?> screenshotPng() async {

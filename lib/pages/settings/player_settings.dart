@@ -39,6 +39,7 @@ class _PlayerSettingsPageState extends State<PlayerSettingsPage> {
   late bool forceAdBlocker;
   late bool autoPlayNext;
   late bool smartPluginOrder;
+  late bool autoSkipOpEd;
   late bool backgroundPlayback;
   late bool brightnessVolumeGesture;
   late int playerButtonSkipTime;
@@ -72,6 +73,7 @@ class _PlayerSettingsPageState extends State<PlayerSettingsPage> {
     autoPlayNext = GStorage.getSetting<bool>(SettingsKeys.autoPlayNext);
     smartPluginOrder =
         GStorage.getSetting<bool>(SettingsKeys.smartPluginOrder);
+    autoSkipOpEd = GStorage.getSetting<bool>(SettingsKeys.autoSkipOpEd);
     backgroundPlayback =
         GStorage.getSetting<bool>(SettingsKeys.backgroundPlayback);
     playerDisableAnimations =
@@ -355,6 +357,18 @@ class _PlayerSettingsPageState extends State<PlayerSettingsPage> {
                 title: Text('规则智能排序'),
                 description: Text('按播放成功率和加载速度排列片源，关闭后使用规则管理中的顺序'),
                 initialValue: smartPluginOrder,
+              ),
+              SettingsTile.switchTile(
+                leading: Icons.fast_forward_rounded,
+                onToggle: (value) async {
+                  autoSkipOpEd = value ?? !autoSkipOpEd;
+                  await GStorage.putSetting<bool>(
+                      SettingsKeys.autoSkipOpEd, autoSkipOpEd);
+                  setState(() {});
+                },
+                title: Text('自动跳过片头片尾'),
+                description: Text('播放到 OP / ED 时倒数 3 秒后自动跳过，可随时取消'),
+                initialValue: autoSkipOpEd,
               ),
               if (Platform.isAndroid)
                 SettingsTile.switchTile(
