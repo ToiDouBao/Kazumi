@@ -3,9 +3,11 @@ import 'package:kazumi/modules/search/plugin_search_module.dart';
 import 'package:kazumi/plugins/anti_crawler_config.dart';
 import 'package:kazumi/plugins/api_rule_config.dart';
 import 'package:kazumi/request/config/api_endpoints.dart';
+import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/plugin/api_rule_engine.dart';
 import 'package:kazumi/utils/episode_url.dart';
 import 'package:kazumi/utils/http_headers.dart';
+import 'package:kazumi/utils/search_keyword.dart';
 
 export 'package:kazumi/services/plugin/rule_engine_models.dart'
     show
@@ -231,21 +233,36 @@ class Plugin {
     return _ruleEngine.tryParseHarvestedSearch(_executionConfig, html);
   }
 
+  /// 搜索没有结果时，会换一种空格写法再搜（见 [searchKeywordVariants]），
+  /// 只有在前一次确实没有结果时才会发出额外请求。
   Future<PluginSearchResponse> queryBangumi(
     String keyword, {
     bool shouldRethrow = false,
     RuleCancelToken? cancelToken,
   }) async {
-    try {
-      return (await traceSearch(keyword, cancelToken: cancelToken)).response;
-    } on CaptchaRequiredException {
-      rethrow;
-    } on NoResultException {
-      rethrow;
-    } on SearchErrorException {
-      if (shouldRethrow) rethrow;
-      return PluginSearchResponse(pluginName: name, data: <SearchItem>[]);
+    NoResultException? firstNoResult;
+    for (final candidate in [keyword, ...searchKeywordVariants(keyword)]) {
+      try {
+        final response =
+            (await traceSearch(candidate, cancelToken: cancelToken)).response;
+        if (firstNoResult != null) {
+          KazumiLogger().i(
+            'Plugin $name: no results for "$keyword", found with "$candidate"',
+          );
+        }
+        return response;
+      } on CaptchaRequiredException {
+        rethrow;
+      } on NoResultException catch (e) {
+        firstNoResult ??= e;
+      } on SearchErrorException {
+        // 重试的写法出错时，仍按第一次的“没有结果”处理
+        if (firstNoResult != null) throw firstNoResult;
+        if (shouldRethrow) rethrow;
+        return PluginSearchResponse(pluginName: name, data: <SearchItem>[]);
+      }
     }
+    throw firstNoResult!;
   }
 
   Future<List<Road>> queryChapterRoads(
