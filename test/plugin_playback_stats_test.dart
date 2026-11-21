@@ -107,5 +107,31 @@ void main() {
       expect(pickBestSearchItem([item('A'), item('B')], ['C'])!.name, 'A');
       expect(pickBestSearchItem([], ['C']), isNull);
     });
+
+    test('never picks another season', () {
+      final results = [
+        item('我的英雄学院第二季'),
+        item('我的英雄学院第四季'),
+        item('我的英雄学院：两位英雄'),
+        item('我的英雄学院'),
+      ];
+      expect(pickBestSearchItem(results, ['我的英雄学院'])!.name, '我的英雄学院');
+      expect(
+        pickBestSearchItem(results.take(2).toList(), ['我的英雄学院']),
+        isNull,
+      );
+    });
+
+    test('matches the season written differently', () {
+      final results = [
+        item('我的英雄学院第4季'),
+        item('我的英雄学院第2季'),
+        item('我的英雄学院'),
+      ];
+      expect(
+        pickBestSearchItem(results, ['我的英雄学院 第二季'])!.name,
+        '我的英雄学院第2季',
+      );
+    });
   });
 }

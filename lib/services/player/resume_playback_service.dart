@@ -12,6 +12,7 @@ import 'package:kazumi/services/plugin/rule_engine_models.dart'
     show RuleCancelToken;
 import 'package:kazumi/services/storage/settings_keys.dart';
 import 'package:kazumi/services/storage/storage.dart';
+import 'package:kazumi/utils/search_keyword.dart';
 
 /// 一键继续观看：为番剧找一个能播放的规则。
 ///
@@ -164,11 +165,31 @@ SearchItem? pickBestSearchItem(List<SearchItem> results, List<String> names) {
   for (final result in results) {
     if (targets.contains(_normalize(result.name))) return result;
   }
-  for (final result in results) {
+
+  // 名字不完全一致时，只接受同一季的结果，避免第 1 季播成第 2 季
+  final wantedSeason = names
+          .map(seasonNumberOf)
+          .firstWhere((season) => season != null, orElse: () => null) ??
+      1;
+  final sameSeason = [
+    for (final result in results)
+      if ((seasonNumberOf(result.name) ?? 1) == wantedSeason) result,
+  ];
+  final baseTargets = {
+    for (final name in names)
+      if (_normalize(baseTitleOf(name)).isNotEmpty)
+        _normalize(baseTitleOf(name)),
+  };
+  // 包含番剧名字的结果里，选名字最短（最接近）的
+  final containing = sameSeason.where((result) {
     final normalized = _normalize(result.name);
-    if (targets.any(normalized.contains)) return result;
-  }
-  return results.first;
+    return targets.any(normalized.contains) ||
+        baseTargets.any(normalized.contains);
+  }).toList()
+    ..sort((a, b) =>
+        _normalize(a.name).length.compareTo(_normalize(b.name).length));
+  if (containing.isNotEmpty) return containing.first;
+  return sameSeason.isEmpty ? null : sameSeason.first;
 }
 
 String _normalize(String value) =>

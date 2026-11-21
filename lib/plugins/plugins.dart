@@ -250,6 +250,8 @@ class Plugin {
             'Plugin $name: no results for "$keyword", found with "$candidate"',
           );
         }
+        // 用基本名字搜到的结果会包含其他季，把要找的那一季排到前面
+        response.data = sortBySeason(response.data, keyword, (i) => i.name);
         return response;
       } on CaptchaRequiredException {
         rethrow;
