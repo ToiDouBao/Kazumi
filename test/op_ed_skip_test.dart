@@ -79,6 +79,44 @@ void main() {
     });
   });
 
+  group('parseAniSkipResponse safety', () {
+    test('ignores mixed OP/ED that plays over the story', () {
+      final json = {
+        'found': true,
+        'results': [aniSkipResult('mixed-op', 1383, 1441, 1441.5)],
+      };
+      expect(parseAniSkipResponse(json, s(1441)), isEmpty);
+    });
+
+    test('rejects entries that cannot be a song', () {
+      final json = {
+        'found': true,
+        'results': [
+          aniSkipResult('op', 0, 27, 1430),
+          aniSkipResult('ed', 1300, 1440, 1440),
+          aniSkipResult('op', 1200, 1290, 1430),
+          aniSkipResult('ed', 100, 190, 1430),
+        ],
+      };
+      expect(parseAniSkipResponse(json, s(1430)), isEmpty);
+    });
+
+    test('only auto-skips when the video version matches', () {
+      final json = {
+        'found': true,
+        'results': [
+          aniSkipResult('op', 60, 150, 1432),
+          aniSkipResult('ed', 1300, 1390, 1440),
+        ],
+      };
+      final segments = parseAniSkipResponse(json, s(1430));
+      expect(segments.map((e) => (e.kind, e.confident)), [
+        (SkipSegmentKind.opening, true),
+        (SkipSegmentKind.ending, false),
+      ]);
+    });
+  });
+
   group('segmentsFromChapters', () {
     test('uses chapter titles', () {
       final segments = segmentsFromChapters([
@@ -101,9 +139,9 @@ void main() {
         (start: s(210), title: 'Chapter 3'),
         (start: s(1330), title: 'Chapter 4'),
       ], s(1420));
-      expect(segments.map((e) => (e.kind, e.start)), [
-        (SkipSegmentKind.opening, s(120)),
-        (SkipSegmentKind.ending, s(1330)),
+      expect(segments.map((e) => (e.kind, e.start, e.confident)), [
+        (SkipSegmentKind.opening, s(120), false),
+        (SkipSegmentKind.ending, s(1330), false),
       ]);
     });
 
@@ -235,8 +273,8 @@ void main() {
     test('skipNow jumps immediately', () {
       final t = tracker();
       t.tick(s(80), playing: true);
-      expect(t.skipNow(), s(150));
-      expect(t.skipNow(), isNull);
+      expect(t.skipNow(s(80)), s(150));
+      expect(t.skipNow(s(150)), isNull);
     });
 
     test('seeking away hides the prompt and it comes back later', () {
@@ -248,10 +286,55 @@ void main() {
       expect(t.pending.value!.secondsLeft, 3);
     });
 
+    test('uncertain segments only offer a button', () {
+      final t = OpEdSkipTracker()..setSegments([opening.withConfidence(false)]);
+      for (var p = 57; p < 100; p++) {
+        expect(t.tick(s(p), playing: true), isNull);
+        expect(t.pending.value!.automatic, isFalse);
+      }
+      expect(t.skipNow(s(100)), s(150));
+    });
+
+    test('a skip can be undone for a few seconds', () {
+      final t = tracker();
+      t.tick(s(80), playing: true);
+      expect(t.skipNow(s(80)), s(150));
+      expect(t.recent.value!.from, s(80));
+      t.tick(s(151), playing: true);
+      expect(t.undo(), s(80));
+      expect(t.recent.value, isNull);
+      // 撤销后回到片头里也不会再提示
+      t.tick(s(81), playing: true);
+      expect(t.pending.value, isNull);
+    });
+
+    test('the undo button disappears after five seconds of playback', () {
+      final t = tracker();
+      t.tick(s(80), playing: true);
+      t.skipNow(s(80));
+      for (var i = 0; i < 4; i++) {
+        t.tick(s(151 + i), playing: true);
+      }
+      expect(t.recent.value, isNotNull);
+      t.tick(s(155), playing: false);
+      expect(t.recent.value, isNotNull);
+      t.tick(s(156), playing: true);
+      expect(t.recent.value, isNull);
+    });
+
     test('does not prompt near the end of a segment', () {
       final t = tracker();
       expect(t.tick(s(147), playing: true), isNull);
       expect(t.pending.value, isNull);
     });
+  });
+
+  test('episodeNumberMatchesPosition', () {
+    expect(episodeNumberMatchesPosition('第05集', 5), isTrue);
+    expect(episodeNumberMatchesPosition('第14集', 1), isFalse);
+    expect(episodeNumberMatchesPosition('EP03', 3), isTrue);
+    expect(episodeNumberMatchesPosition('07', 6), isFalse);
+    expect(episodeNumberMatchesPosition('PV', 1), isTrue);
+    expect(episodeNumberMatchesPosition('正片', 1), isTrue);
   });
 }

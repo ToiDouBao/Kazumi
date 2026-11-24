@@ -593,7 +593,8 @@ class _PlayerItemState extends State<PlayerItem>
       return;
     }
 
-    final episode = videoPageController.playbackEpisode.episode;
+    final selection = videoPageController.playbackEpisode;
+    final episode = selection.episode;
     final bangumiItem = videoPageController.bangumiItem;
     final key = '${bangumiItem.id}:$episode:${playerController.videoUrl}';
     if (key != _opEdKey) {
@@ -604,7 +605,15 @@ class _PlayerItemState extends State<PlayerItem>
     final duration = playback.playerDuration;
     if (!_opEdLookupStarted && duration > Duration.zero) {
       _opEdLookupStarted = true;
-      unawaited(_loadOpEdSegments(key, bangumiItem, episode, duration));
+      final title =
+          videoPageController.resolveEpisode(selection)?.displayTitle ?? '';
+      unawaited(_loadOpEdSegments(
+        key,
+        bangumiItem,
+        episode,
+        duration,
+        episodeNumberReliable: episodeNumberMatchesPosition(title, episode),
+      ));
     }
 
     final target = _opEdSkip.tick(
@@ -618,8 +627,9 @@ class _PlayerItemState extends State<PlayerItem>
     String key,
     BangumiItem bangumiItem,
     int episode,
-    Duration duration,
-  ) async {
+    Duration duration, {
+    required bool episodeNumberReliable,
+  }) async {
     // 先用视频内嵌章节，缺的片头/片尾再从 AniSkip 补上
     final segments = segmentsFromChapters(
       await playerController.playback.readChapters(),
@@ -633,7 +643,10 @@ class _PlayerItemState extends State<PlayerItem>
       );
       for (final segment in online) {
         if (!segments.any((s) => s.kind == segment.kind)) {
-          segments.add(segment);
+          // 集数对不上时查到的可能是别的集，只显示按钮不自动跳
+          segments.add(episodeNumberReliable
+              ? segment
+              : segment.withConfidence(false));
         }
       }
     }
@@ -656,43 +669,81 @@ class _PlayerItemState extends State<PlayerItem>
   }
 
   Widget _buildOpEdSkipPrompt() {
-    return ValueListenableBuilder<PendingSkip?>(
-      valueListenable: _opEdSkip.pending,
-      builder: (context, pending, _) {
-        if (pending == null) return const SizedBox.shrink();
-        return Material(
-          color: Colors.black.withValues(alpha: 0.75),
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 4, 6, 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '${pending.secondsLeft} 秒后跳过${pending.segment.kind.label}',
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                ),
-                const SizedBox(width: 6),
-                TextButton(
-                  onPressed: () {
-                    _opEdSkip.cancel();
-                    widget.keyboardFocus.requestFocus();
-                  },
-                  child: const Text('取消'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    final target = _opEdSkip.skipNow();
-                    if (target != null) unawaited(_seekPastSegment(target));
-                    widget.keyboardFocus.requestFocus();
-                  },
-                  child: const Text('立即跳过'),
-                ),
-              ],
-            ),
-          ),
+    return ValueListenableBuilder<RecentSkip?>(
+      valueListenable: _opEdSkip.recent,
+      builder: (context, recent, _) {
+        return ValueListenableBuilder<PendingSkip?>(
+          valueListenable: _opEdSkip.pending,
+          builder: (context, pending, _) {
+            if (pending != null) return _buildPendingSkip(pending);
+            if (recent != null) {
+              return _opEdSkipBox(
+                '已跳过${recent.segment.kind.label}',
+                [
+                  _opEdSkipAction('撤销', () {
+                    final back = _opEdSkip.undo();
+                    if (back != null) unawaited(playerController.seek(back));
+                  }),
+                ],
+              );
+            }
+            return const SizedBox.shrink();
+          },
         );
       },
+    );
+  }
+
+  Widget _buildPendingSkip(PendingSkip pending) {
+    final label = pending.segment.kind.label;
+    void skip() {
+      final target = _opEdSkip.skipNow(playerController.playback.playerPosition);
+      if (target != null) unawaited(_seekPastSegment(target));
+    }
+
+    if (!pending.automatic) {
+      // 时间不确定：不自动跳，只给按钮
+      return _opEdSkipBox(null, [
+        _opEdSkipAction('跳过$label', skip),
+        _opEdSkipAction('✕', _opEdSkip.cancel),
+      ]);
+    }
+    return _opEdSkipBox('${pending.secondsLeft} 秒后跳过$label', [
+      _opEdSkipAction('取消', _opEdSkip.cancel),
+      _opEdSkipAction('立即跳过', skip),
+    ]);
+  }
+
+  Widget _opEdSkipAction(String text, VoidCallback onPressed) {
+    return TextButton(
+      onPressed: () {
+        onPressed();
+        widget.keyboardFocus.requestFocus();
+      },
+      child: Text(text),
+    );
+  }
+
+  Widget _opEdSkipBox(String? message, List<Widget> actions) {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.75),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(message == null ? 6 : 14, 4, 6, 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (message != null) ...[
+              Text(
+                message,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+              const SizedBox(width: 6),
+            ],
+            ...actions,
+          ],
+        ),
+      ),
     );
   }
 

@@ -17,6 +17,7 @@ class SkipSegment {
     required this.kind,
     required this.start,
     required this.end,
+    this.confident = true,
   });
 
   final SkipSegmentKind kind;
@@ -25,27 +26,43 @@ class SkipSegment {
   /// 跳过后要去的位置；片尾一直到视频结束时为视频总长
   final Duration end;
 
+  /// 时间可靠时倒数后自动跳过；不可靠时只显示跳过按钮，由用户决定
+  final bool confident;
+
   Duration get length => end - start;
+
+  SkipSegment withConfidence(bool value) =>
+      SkipSegment(kind: kind, start: start, end: end, confident: value);
 
   @override
   bool operator ==(Object other) =>
       other is SkipSegment &&
       other.kind == kind &&
       other.start == start &&
-      other.end == end;
+      other.end == end &&
+      other.confident == confident;
 
   @override
-  int get hashCode => Object.hash(kind, start, end);
+  int get hashCode => Object.hash(kind, start, end, confident);
 
   @override
-  String toString() => 'SkipSegment(${kind.name}, $start - $end)';
+  String toString() => 'SkipSegment(${kind.name}, $start - $end'
+      '${confident ? '' : ', manual'})';
 }
 
 const Duration _minSegmentLength = Duration(seconds: 20);
 const Duration _maxSegmentLength = Duration(seconds: 180);
 
+/// AniSkip 里 OP/ED 的合理长度，之外的多半是投稿错误
+const Duration _minSongLength = Duration(seconds: 45);
+const Duration _maxSongLength = Duration(seconds: 130);
+
 /// AniSkip 数据和本地视频长度最多可以相差多少，超过就认为不是同一个版本
 const Duration aniSkipLengthTolerance = Duration(seconds: 15);
+
+/// 长度相差在这个范围内才认为是同一个视频版本，可以自动跳过；
+/// 否则时间可能整体偏移几秒，只显示跳过按钮
+const Duration aniSkipConfidentTolerance = Duration(seconds: 3);
 
 /// 片段结束点离视频结尾这么近时，直接跳到结尾（触发自动连播）
 const Duration _snapToEndThreshold = Duration(seconds: 3);
@@ -57,7 +74,11 @@ Duration _seconds(num value) =>
 ///
 /// AniSkip 只在视频长度完全一致时才返回结果，所以这里用 `episodeLength=0`
 /// 拿到全部投稿，再自己按 [videoLength] 过滤：每个投稿记录了投稿者的视频长度，
-/// 相差超过 [aniSkipLengthTolerance] 的忽略。
+/// 相差超过 [aniSkipLengthTolerance] 的忽略，超过 [aniSkipConfidentTolerance]
+/// 的只作为手动跳过。
+///
+/// 不使用 `mixed-op` / `mixed-ed`：那是叠在正片画面上的 OP/ED，跳过会漏掉剧情。
+/// 长度不像一首歌、或者位置不对（片头在后半段、片尾在前半段）的投稿也忽略。
 List<SkipSegment> parseAniSkipResponse(
   Object? json,
   Duration videoLength,
@@ -70,8 +91,8 @@ List<SkipSegment> parseAniSkipResponse(
   for (final raw in results) {
     if (raw is! Map) continue;
     final kind = switch (raw['skipType']) {
-      'op' || 'mixed-op' => SkipSegmentKind.opening,
-      'ed' || 'mixed-ed' => SkipSegmentKind.ending,
+      'op' => SkipSegmentKind.opening,
+      'ed' => SkipSegmentKind.ending,
       _ => null,
     };
     final interval = raw['interval'];
@@ -91,11 +112,16 @@ List<SkipSegment> parseAniSkipResponse(
 
     final start = _seconds(interval['startTime'] as num);
     var end = _seconds(interval['endTime'] as num);
-    if (end - start < _minSegmentLength || end - start > _maxSegmentLength) {
+    final reference = _seconds(submittedLength);
+    if (end - start < _minSongLength || end - start > _maxSongLength) {
       continue;
     }
+    final inPlace = kind == SkipSegmentKind.opening
+        ? start < reference * 0.45
+        : start > reference * 0.5;
+    if (!inPlace) continue;
     // 投稿者的片尾一直到结尾时，在本地视频里也跳到结尾
-    if (_seconds(submittedLength) - end <= _snapToEndThreshold &&
+    if (reference - end <= _snapToEndThreshold &&
         videoLength > Duration.zero) {
       end = videoLength;
     }
@@ -104,7 +130,13 @@ List<SkipSegment> parseAniSkipResponse(
     final previous = byKind[kind];
     if (previous == null || diff < previous.diff) {
       byKind[kind] = (
-        segment: SkipSegment(kind: kind, start: start, end: end),
+        segment: SkipSegment(
+          kind: kind,
+          start: start,
+          end: end,
+          confident: videoLength > Duration.zero &&
+              diff <= aniSkipConfidentTolerance,
+        ),
         diff: diff,
       );
     }
@@ -151,6 +183,8 @@ List<SkipSegment> segmentsFromChapters(
     if (length <= Duration.zero) continue;
 
     SkipSegmentKind? kind;
+    // 标题写明的章节可以自动跳过，按长度猜的只显示按钮
+    var titled = true;
     final title = sorted[i].title;
     if (_openingTitle.hasMatch(title)) {
       kind = SkipSegmentKind.opening;
@@ -159,6 +193,7 @@ List<SkipSegment> segmentsFromChapters(
     } else if (typicalLength != null &&
         length >= typicalLength.$1 &&
         length <= typicalLength.$2) {
+      titled = false;
       kind = start + length ~/ 2 < videoLength ~/ 2
           ? SkipSegmentKind.opening
           : SkipSegmentKind.ending;
@@ -169,7 +204,9 @@ List<SkipSegment> segmentsFromChapters(
       continue;
     }
     if (segments.any((s) => s.kind == kind)) continue;
-    segments.add(SkipSegment(kind: kind, start: start, end: end));
+    segments.add(
+      SkipSegment(kind: kind, start: start, end: end, confident: titled),
+    );
   }
   return segments;
 }
@@ -246,22 +283,42 @@ class PendingSkip {
   const PendingSkip(this.segment, this.secondsLeft);
 
   final SkipSegment segment;
+
+  /// 自动跳过前剩余的秒数；时间不可靠、只提供按钮时为 null
+  final int? secondsLeft;
+
+  bool get automatic => secondsLeft != null;
+}
+
+/// 刚刚跳过的片段，在 [OpEdSkipTracker.undoSeconds] 秒内可以撤销
+@immutable
+class RecentSkip {
+  const RecentSkip(this.segment, this.from, this.secondsLeft);
+
+  final SkipSegment segment;
+
+  /// 跳过前的播放位置，撤销时回到这里
+  final Duration from;
   final int secondsLeft;
 }
 
 /// 根据播放进度决定什么时候提示、什么时候跳过
 ///
-/// 每秒调用一次 [tick]：进入片段前 [leadTime] 开始倒数 [countdownSeconds] 秒，
-/// 播放中才倒数，倒数结束返回要跳到的位置。用户取消或跳过之后，
+/// 每秒调用一次 [tick]。进入片段前 [leadTime] 开始提示：
+/// - 时间可靠的片段倒数 [countdownSeconds] 秒（只在播放时倒数），然后跳过；
+/// - 不可靠的片段只显示跳过按钮，不会自动跳。
+/// 跳过后 [undoSeconds] 秒内可以撤销。用户取消、跳过或撤销之后，
 /// 本集内同一片段不再提示（即使往回拖动重看）。
 class OpEdSkipTracker {
   OpEdSkipTracker({
     this.countdownSeconds = 3,
     this.leadTime = const Duration(seconds: 3),
+    this.undoSeconds = 5,
   });
 
   final int countdownSeconds;
   final Duration leadTime;
+  final int undoSeconds;
 
   /// 剩余至少这么多时才值得跳
   static const Duration _minRemaining = Duration(seconds: 5);
@@ -270,6 +327,7 @@ class OpEdSkipTracker {
   final Set<SkipSegment> _handled = {};
 
   final ValueNotifier<PendingSkip?> pending = ValueNotifier(null);
+  final ValueNotifier<RecentSkip?> recent = ValueNotifier(null);
 
   List<SkipSegment> get segments => _segments;
 
@@ -277,6 +335,7 @@ class OpEdSkipTracker {
     _segments = List.unmodifiable(segments);
     _handled.clear();
     pending.value = null;
+    recent.value = null;
   }
 
   void reset() => setSegments(const []);
@@ -294,30 +353,38 @@ class OpEdSkipTracker {
 
   /// 返回需要跳转到的位置；不需要跳转时返回 null
   Duration? tick(Duration position, {required bool playing}) {
+    final undo = recent.value;
+    if (undo != null && playing) {
+      recent.value = undo.secondsLeft > 1
+          ? RecentSkip(undo.segment, undo.from, undo.secondsLeft - 1)
+          : null;
+    }
+
     final segment = _segmentAt(position);
     final current = pending.value;
     if (segment == null) {
-      // 拖出了片段范围，下次进入时重新倒数
+      // 拖出了片段范围，下次进入时重新提示
       if (current != null) pending.value = null;
       return null;
     }
     if (current == null || current.segment != segment) {
-      pending.value = PendingSkip(segment, countdownSeconds);
+      pending.value =
+          PendingSkip(segment, segment.confident ? countdownSeconds : null);
       return null;
     }
-    if (!playing) return null;
-    final left = current.secondsLeft - 1;
-    if (left > 0) {
-      pending.value = PendingSkip(segment, left);
+    final left = current.secondsLeft;
+    if (left == null || !playing) return null;
+    if (left > 1) {
+      pending.value = PendingSkip(segment, left - 1);
       return null;
     }
-    return _complete(segment);
+    return _complete(segment, position);
   }
 
   /// 立即跳过当前提示的片段
-  Duration? skipNow() {
+  Duration? skipNow(Duration position) {
     final segment = pending.value?.segment;
-    return segment == null ? null : _complete(segment);
+    return segment == null ? null : _complete(segment, position);
   }
 
   /// 本集不再跳过当前提示的片段
@@ -328,11 +395,40 @@ class OpEdSkipTracker {
     pending.value = null;
   }
 
-  Duration _complete(SkipSegment segment) {
+  /// 撤销刚才的跳过，返回要回到的位置
+  Duration? undo() {
+    final undo = recent.value;
+    recent.value = null;
+    return undo?.from;
+  }
+
+  Duration _complete(SkipSegment segment, Duration position) {
     _handled.add(segment);
     pending.value = null;
+    recent.value = RecentSkip(segment, position, undoSeconds);
     return segment.end;
   }
 
-  void dispose() => pending.dispose();
+  void dispose() {
+    pending.dispose();
+    recent.dispose();
+  }
+}
+
+final RegExp _episodeNumber = RegExp(
+  r'第\s*0*(\d+)\s*[集话話]|\bep?\s*0*(\d+)\b|^\s*0*(\d+)\s*$',
+  caseSensitive: false,
+);
+
+/// 选集标题里的集数是否和它在列表中的位置（从 1 开始）一致
+///
+/// AniSkip 按位置查询；列表开头多了 PV、第 0 集，或者站点把第二季
+/// 接着第一季编号时，位置和真正的集数对不上，查到的时间就不可靠。
+/// 标题里没有集数时无法判断，按一致处理。
+bool episodeNumberMatchesPosition(String title, int position) {
+  final match = _episodeNumber.firstMatch(title);
+  if (match == null) return true;
+  final number =
+      int.tryParse(match.group(1) ?? match.group(2) ?? match.group(3) ?? '');
+  return number == null || number == position;
 }
